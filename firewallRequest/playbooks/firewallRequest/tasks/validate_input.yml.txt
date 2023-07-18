@@ -1,0 +1,9 @@
+---
+##############################Parameters coming from SNOW-ATR-Rundeck-Jenkins##########################################
+-
+  hosts: localhost
+  tasks:
+  -
+    fail:
+      msg: Failed due to insufficient values
+    when:  request_id is undefined or  request_id == "" or firewall_rule_name is undefined or firewall_rule_name == "" or firewall_logs is undefined or firewall_logs == "" or action is undefined or action == "" or protocol is undefined or protocol == "" or port is undefined or port == "" or  description is undefined or  description == "" or traffic_direction is undefined or traffic_direction == "" or priority is undefined or priority == "" or source_range is undefined or source_range == "" or destination_range is undefined or destination_range == "" 

@@ -1,0 +1,5 @@
+#!/bin/bash
+host=`echo $1 | tr '[:upper:]' '[:lower:]'`
+#environment=`echo $2`
+
+cat /etc/ansible/getServerLabels/server_labels_all.txt | grep -w "\b$host\b" | head -n1 | awk -F"@" '{print $2}'

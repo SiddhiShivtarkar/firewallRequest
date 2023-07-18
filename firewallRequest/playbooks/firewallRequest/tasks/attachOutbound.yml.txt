@@ -1,0 +1,144 @@
+---
+- block:
+############################################Fetching source server's parameters to create terraform main config file###################################
+    - name: find hostname of server from source server range 
+      shell: gcloud compute instances list --filter="networkInterfaces.networkIP:'{{ source_range }}'" --format="value(name)"   
+      register: host
+    - debug: var=host.stdout
+
+    - name: get project id of the hosted server 
+      shell: |
+         cd /ansible_playbooks/IDOP/IDOP-dev-env/Siemens-Automation/firewallRequestnew/scripts
+         ./getProjectId.sh "{{ host.stdout }}"
+      register: prjid
+    - debug: var=prjid.stdout
+
+    - name: set project 
+      shell: gcloud config set project "{{ prjid.stdout }}"
+      register: setprj
+    - debug: var=setprj.stdout
+
+    - name: get zone name
+      shell: gcloud compute instances list --project "{{ prjid.stdout }}" --format="(ZONE)" --filter="{{ host.stdout }}" | head -n 2 | tail -n 1
+      register: zone 
+    - debug: var=zone.stdout 
+
+    - name: get network api 
+      shell: gcloud compute instances describe "{{ host.stdout }}" --format='get(networkInterfaces[0].network)' --zone="{{ zone.stdout }}" 
+      register: nwapi
+    - debug: var=nwapi.stdout
+
+    - name: get network name 
+      shell: echo "{{ nwapi.stdout }}" |  grep -o "projects.*"
+      register: nw
+    - debug: var=nw.stdout 
+
+    - name: get machine type of the server
+      shell: gcloud compute instances list --filter="name={{ host.stdout }}" --format="value(MACHINE_TYPE)"
+      register: machine_type
+    - debug: var=machine_type.stdout
+
+    - name: get info about previous network tags that are attached to  the server
+      shell: gcloud compute instances describe "{{ host.stdout }}" --zone="{{ zone.stdout }}" --format="value(tags.items)"
+      register: old_tags
+    - debug: var=old_tags.stdout
+
+    - shell: echo "{{ old_tags.stdout }}"  | sed 's/;/", "/g; s/^/"/; s/$/"/'
+      register: old_tag
+    - debug: var=old_tag.stdout
+
+    - name: get disk name
+      shell: gcloud compute instances describe {{ host.stdout }} --format='value(disks[0].source)' --zone="{{ zone.stdout }}" 
+      register: disk                                                                                                               
+    - debug: var=disk.stdout
+
+    - shell: echo "{{ disk.stdout }}" | awk -F "disks/" '{print $2}'
+      register: disks
+    - debug: var=disks.stdout
+
+#    - shell: echo "'{{ disks.stdout }}'" | sed "s/'//g"
+#      register: boot_disk
+#    - debug: var=boot_disk.stdout
+     
+    - name: get boot disk os image name 
+      shell: gcloud compute disks describe {{ disks.stdout }} --project={{ prjid.stdout }} --zone={{ zone.stdout }} --format='value(sourceImage)'
+      register: img
+    - debug: var=img.stdout
+
+    - shell: echo "{{img.stdout}}" | awk -F "/images/" '{print $2}'
+      register: imgs
+    - debug: var=imgs.stdout
+
+    - name: get subnetwork of the server 
+      shell: gcloud compute instances describe "{{ host.stdout }}" --zone="{{ zone.stdout }}" --format="value(networkInterfaces[0].subnetwork)" 
+      register: subnw
+    - debug: var=subnw.stdout
+
+    - shell: echo "{{ subnw.stdout }}" |  grep -o "projects.*"
+      register: subnws
+    - debug: var=subnws.stdout
+
+    - name: get zone name of the destination server
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ destination_range }}" --format="value(ZONE)"
+      register: dest_zone
+    - debug: var=dest_zone.stdout
+
+    - name: get hostname of destination instance
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ destination_range }} AND ZONE:{{ dest_zone.stdout }}" --format="value(name)"
+      register: destination_host
+    - debug: var=destination_host.stdout
+
+    - set_fact:
+        tag_value: "{{ host.stdout }}-egress-{{ destination_host.stdout }}"
+
+############################################create terraform main config file to fetch tfstate file of existing servers###################################
+    - name: Check if file exists
+      shell: |
+        mkdir '/ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}'
+#        chown -R jenkins:jenkins '/var/lib/jenkins/workspace/firewallRequestsnew/{{ host.stdout }}'
+
+    - name: create main.tf file to import terraform state file of existing servers 
+      blockinfile:
+        path: "/ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}/main.tf"
+        create: yes
+        block: |
+          resource "google_compute_instance" "{{ host.stdout }}" {
+          project      = "{{ prjid.stdout }}"
+          name         = "{{ host.stdout }}"
+          zone         = "{{ zone.stdout }}"
+          machine_type = "{{ machine_type.stdout }}"
+          boot_disk {
+            initialize_params {
+              image = "{{ imgs.stdout }}"
+            }
+          }
+          network_interface {
+            network    = "{{ nw.stdout }}"
+            subnetwork = "{{ subnws.stdout }}"
+          }
+          } 
+        insertafter: EOF
+
+    - name: fetching terraform state file using terraform import
+      shell: |
+        cd /ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}
+        export GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json; terraform init
+        export GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json; terraform import google_compute_instance.{{ host.stdout }} projects/{{ prjid.stdout }}/zones/{{ zone.stdout }}/instances/{{ host.stdout }}
+      register: get_state
+    - debug: var=get_state.stdout
+
+    - shell: |
+        cd /ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}
+        rm -rf /ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}/main.tf
+        terraform show | sed 's/\x1b\[[0-9;]*m//g' > main.tf
+        cp /ansible_playbooks/IDOP/IDOP-dev-env/Siemens-Automation/firewallRequestnew/playbooks/firewallRequest/tasks/main.py /ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}
+        python3 main.py 
+      register: create_main
+    - debug: var=create_main
+
+    - shell: |
+        cd /ansible_playbooks/workspace/firewallRequestsnew/{{ host.stdout }}
+        sed -i '/tags\s*=\s*\[/ { :a; N; /]/!ba; s/\(tags\s*=\s*\[\)/\1\n        "{{ tag_value }}",/ }' main.tf 
+      register: add_tag
+    - debug: var=add_tag.stdout 
+    - shell: gcloud config set project prj-acn-dev-idopauto

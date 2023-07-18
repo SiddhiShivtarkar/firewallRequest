@@ -1,0 +1,26 @@
+# Read the main.tf file
+with open("main.tf", "r") as file:
+    lines = file.readlines()
+
+# Comment out lines containing the specified strings
+strings_to_comment = [
+    "cpu_platform         =", 
+    "current_status       =", 
+    "id                   =", 
+    "instance_id          =", 
+    "label_fingerprint    =", 
+    "metadata_fingerprint =", 
+    "self_link            =", 
+    "tags_fingerprint     =", 
+    "name               ="
+]
+comment_prefix = "# "
+commented_lines = []
+for line in lines:
+    if any(string in line for string in strings_to_comment):
+        line = comment_prefix + line
+    commented_lines.append(line)
+
+# Write the modified content back to the main.tf file
+with open("main.tf", "w") as file:
+    file.writelines(commented_lines)

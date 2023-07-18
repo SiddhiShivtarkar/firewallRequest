@@ -1,0 +1,5 @@
+---
+# tasks file for firewall request
+- import_tasks: firewall_rule.yml
+  tags:
+    - firewall_rule

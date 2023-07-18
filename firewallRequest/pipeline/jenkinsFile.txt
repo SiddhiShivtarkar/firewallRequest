@@ -1,0 +1,121 @@
+currentBuild.displayName = "${ticketDetails}"+"#"+currentBuild.number
+def test_output1 = ""
+def project_id = ""
+def zone_name = ""
+def IP = ""
+def hostname = ""
+pipeline {
+        agent any
+        stages {
+                   stage('Validate Input') {
+                        steps {
+                                dir("/var/lib/jenkins/IDOP/firewallRequestnew/playbooks/firewallRequest/tasks/") {
+                                    sh "sudo ansible-playbook validate_input.yml  --extra-vars 'firewall_rule_name=${firewall_rule_name} firewall_logs=${firewall_logs} action=${action} protocol=${protocol} port=${port} description=${description} traffic_direction=${traffic_direction} network=${network} priority=${priority} source_range=${source_range} destination_range=${destination_range} request_id=${ticketDetails}'"
+                                }
+                        }
+                }
+
+                stage('Validate if firewall rule already exists, if not create a rule') {
+                        steps {
+                                dir("/var/lib/jenkins/IDOP/firewallRequestnew/playbooks/") {
+                                    sh "sudo ansible-playbook firewallRequest.yml  --extra-vars 'firewall_rule_name=${firewall_rule_name} firewall_logs=${firewall_logs} action=${action} protocol=${protocol} port=${port} description=${description} traffic_direction=${traffic_direction} network=${network} priority=${priority} source_range=${source_range} destination_range=${destination_range} request_id=${ticketDetails}'"
+                                }
+                        }
+                }
+
+				stage('terraform init - egress') {
+				when{
+	            expression { traffic_direction == 'egress'}  
+                }
+                        steps {
+						
+						script{
+						hostname = sh (  
+						script: """
+                        gcloud compute instances list --filter="networkInterfaces.networkIP:'${source_range}'" --format="value(name)"
+                        """,
+						returnStdout: true
+						).trim() 
+						echo "${hostname}"	
+				        sh """
+						cd /var/lib/jenkins/workspace/firewallRequestsnew/'${hostname}'
+                        sudo terraform init
+                        """
+						}
+					}
+					}	
+
+				stage('terraform init - ingress') {
+				when{
+	            expression { traffic_direction == 'ingress'}  
+                }
+                        steps {
+						
+						script{
+						hostname = sh (  
+						script: """
+                        gcloud compute instances list --filter="networkInterfaces.networkIP:'${destination_range}'" --format="value(name)"
+                        """,
+						returnStdout: true
+						).trim() 
+						echo "${hostname}"	
+						sh """
+						cd /var/lib/jenkins/workspace/firewallRequestsnew/'${hostname}'
+                        sh "sudo terraform init"
+						"""
+						    
+						}
+					}
+					}			
+				
+
+				stage('terraform plan & apply - egress') {
+				when{
+	            expression { traffic_direction == 'egress'}  
+                }
+                        steps {
+						
+						script{
+						hostname = sh (  
+						script: """
+                        gcloud compute instances list --filter="networkInterfaces.networkIP:'${source_range}'" --format="value(name)"
+                        """,
+						returnStdout: true
+						).trim() 
+						echo "${hostname}"	
+						sh """
+						cd /var/lib/jenkins/workspace/firewallRequestsnew/'${hostname}'
+                        sudo -E env "GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json" terraform plan
+						sudo -E env "GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json" terraform apply -auto-approve
+						"""
+						}
+					}
+					}	
+
+				stage('terraform plan & apply - ingress') {
+				when{
+	            expression { traffic_direction == 'ingress'}  
+                }
+                        steps {
+						
+						script{
+						hostname = sh (  
+						script: """
+                        gcloud compute instances list --filter="networkInterfaces.networkIP:'${destination_range}'" --format="value(name)"
+                        """,
+						returnStdout: true
+						).trim() 
+						echo "${hostname}"
+						sh """
+						cd /var/lib/jenkins/workspace/firewallRequestsnew/'${hostname}'
+                        sudo -E env "GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json" terraform plan
+						sudo -E env "GOOGLE_APPLICATION_CREDENTIALS=/etc/svc.json" terraform apply -auto-approve
+						"""
+						}
+					}
+					}	
+					
+
+				
+            }    
+        }

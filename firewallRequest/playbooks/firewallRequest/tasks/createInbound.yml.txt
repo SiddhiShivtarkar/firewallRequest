@@ -1,0 +1,92 @@
+---
+- block:
+############################################Fetching destination server details to get network name on which destination server is hosted###################
+    - name: find hostname of server from server range 
+      shell: gcloud compute instances list --filter="networkInterfaces.networkIP:'{{ destination_range }}'" --format="value(name)"   
+      register: host
+    - debug: var=host.stdout
+
+    - name: get project id of the hosted server 
+      shell: |
+         cd /ansible_playbooks/IDOP/IDOP-dev-env/Siemens-Automation/firewallRequestnew/scripts
+         ./getProjectId.sh "{{ host.stdout }}"
+      register: prjid
+    - debug: var=prjid.stdout
+
+    - name: set project 
+      shell: gcloud config set project "{{ prjid.stdout }}"
+      register: setprj
+    - debug: var=setprj.stdout
+
+    - name: get zone name
+      shell: gcloud compute instances list --project "{{ prjid.stdout }}" --format="(ZONE)" --filter="{{ host.stdout }}" | head -n 2 | tail -n 1
+      register: zone 
+    - debug: var=zone.stdout 
+
+    - name: get network api 
+      shell: gcloud compute instances describe "{{ host.stdout }}" --format='get(networkInterfaces[0].network)' --zone="{{ zone.stdout }}"
+ 
+      register: nwapi
+    - debug: var=nwapi.stdout
+
+    - name: get network name 
+      shell: echo "'{{ nwapi.stdout }}'" | sed 's/.*\/networks\///'
+      register: nw
+    - debug: var=nw.stdout 
+
+    - name: get network name
+      shell: echo "'{{ nw.stdout }}'" | sed "s/'//g"
+      register: nw
+    - debug: var=nw.stdout
+
+    - name: get xpn project name
+      shell: echo "'{{ nwapi.stdout }}'" | sed 's/.*\/projects\///'
+      register: prj
+    - debug: var=prj.stdout
+
+    - name: get xpn project name 
+      shell: echo "'{{ prj.stdout }}'" | cut -d'/' -f1
+      register: xpn_prj
+    - debug: var=xpn_prj.stdout
+
+    - shell: echo "'{{ xpn_prj.stdout }}'" | sed "s/'//g"
+      register: id
+    - debug: var=id.stdout
+
+    - name: get zone name of the source server
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ source_range }}" --format="value(ZONE)"
+      register: src_zone
+    - debug: var=src_zone.stdout
+
+    - name: get hostname of source instance
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ source_range }} AND ZONE:{{ src_zone.stdout }}" --format="value(name)"
+      register: src_host
+    - debug: var=src_host.stdout
+
+    - name: set project
+      shell: gcloud config set project "{{ id.stdout }}"
+      register: setprj
+    - debug: var=setprj.stdout
+
+    - set_fact: 
+        tag_value: "{{ host.stdout }}-ingress-{{ src_host.stdout }}"
+
+##################################################Creating inbound rule when the traffic direction is INGRESS########################
+    - name: create inbound rule - enable logging 
+      shell: gcloud compute firewall-rules create "{{ firewall_rule_name }}" --direction="{{ traffic_direction }}" --priority="{{ priority }}" --network="{{ nw.stdout }}" --action="{{ action }}" --rules="{{ protocol }}":"{{ port }}" --source-ranges="{{ source_range }}" --target-tags="{{ tag_value }}" --enable-logging
+      register: out
+      when: firewall_logs == "yes"
+    - debug: var=out.stdout_lines
+      when: firewall_logs == "yes"
+
+    - name: create inbound rule - disable logging
+      shell: gcloud compute firewall-rules create "{{ firewall_rule_name }}" --direction="{{ traffic_direction }}" --priority="{{ priority }}" --network="{{ nw.stdout }}" --action="{{ action }}" --rules="{{ protocol }}":"{{ port }}" --source-ranges="{{ source_range }}" --target-tags="{{ tag_value }}"
+      register: out
+      when: firewall_logs == "no"
+    - debug: var=out.stdout_lines
+      when: firewall_logs == "no"
+
+    - shell: gcloud config set project prj-acn-dev-idopauto
+
+##################################################Attaching inbound rule to destination server##############################################
+    - include_tasks: attachInbound.yml

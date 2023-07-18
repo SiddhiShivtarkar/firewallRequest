@@ -1,0 +1,61 @@
+---
+- block:
+#############################source server - required parameters for executing gcloud command to perform network connectivity test ####################
+    - name: get zone name of the source server 
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ source_range }}" --format="value(ZONE)"
+      register: zone 
+    - debug: var=zone.stdout
+
+    - name: get hostname of source instance 
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ source_range }} AND ZONE:{{ zone.stdout }}" --format="value(name)"
+      register: source_host
+    - debug: var=source_host.stdout
+
+    - name: get hostname soft link of source instance 
+      shell: gcloud compute instances describe $(gcloud compute instances list --filter="name={{ source_host.stdout }}" --format="value(name)") --format="value(selfLink)" --zone={{ zone.stdout }}                                                                                                                                     
+      register: source_hostlink
+    - debug: var=source_hostlink.stdout
+
+    - shell: echo "{{ source_hostlink.stdout }}" | grep -o "projects.*"
+      register: source_instance
+    - debug: var=source_instance.stdout
+
+#############################Destination server - required parameters for executing gcloud command to perform network connectivity test############ 
+    - name: get zone name of the destination server
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ destination_range }}" --format="value(ZONE)"
+      register: dest_zone
+    - debug: var=dest_zone.stdout
+
+    - name: get hostname of destination instance
+      shell: gcloud compute instances list --filter="INTERNAL_IP={{ destination_range }} AND ZONE:{{ dest_zone.stdout }}" --format="value(name)"
+      register: destination_host
+    - debug: var=destination_host.stdout
+
+    - name: get hostname soft link of destination instance
+      shell: gcloud compute instances describe $(gcloud compute instances list --filter="name={{ destination_host.stdout }}" --format="value(name)") --format="value(selfLink)" --zone={{ dest_zone.stdout }} 
+      register: destination_hostlink
+    - debug: var=destination_hostlink.stdout
+
+    - shell: echo "{{ destination_hostlink.stdout }}" |  grep -o "projects.*"
+      register: destination_instance
+    - debug: var=destination_instance.stdout
+
+################################################################executing gcloud command to perform network connectivity test################
+    - name: validate if firewall rule is already there using network connectivity test 
+      shell: gcloud network-management connectivity-tests create {{ firewall_rule_name }} --source-instance={{ source_instance.stdout }} --source-ip-address={{ source_range }} --destination-instance={{ destination_instance.stdout }} --destination-ip-address={{ destination_range }} --destination-port={{ port }} --protocol={{ protocol }}
+      register: validate_rule
+
+    - name: validate status 
+      shell: gcloud network-management connectivity-tests describe "{{ firewall_rule_name }}"
+      register: validate_status
+    - debug: var=validate_status.stdout
+
+    - fail:
+        msg: Firewall rule is already added
+      when:
+        - '"result: REACHABLE" in validate_status.stdout'
+################################################################Creating Inbound/Outbound rule based on traffic direction####################
+    - include_tasks: createOutbound.yml
+      when: traffic_direction == "egress"
+    - include_tasks: createInbound.yml
+      when: traffic_direction == "ingress"
